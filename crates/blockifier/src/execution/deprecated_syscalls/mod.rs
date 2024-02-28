@@ -1,7 +1,7 @@
 use cairo_felt::Felt252;
 use cairo_vm::types::relocatable::Relocatable;
 use cairo_vm::vm::vm_core::VirtualMachine;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use starknet_api::block::{BlockNumber, BlockTimestamp};
 use starknet_api::core::{
     calculate_contract_address, ClassHash, ContractAddress, EntryPointSelector, EthAddress,
@@ -23,7 +23,7 @@ use crate::execution::call_info::{MessageToL1, OrderedEvent, OrderedL2ToL1Messag
 use crate::execution::entry_point::{CallEntryPoint, CallType, ConstructorContext};
 use crate::execution::execution_utils::{
     execute_deployment, stark_felt_from_ptr, write_maybe_relocatable, write_stark_felt,
-    ReadOnlySegment,
+    ReadOnlySegment, stark_felt_to_felt,
 };
 
 #[cfg(test)]
@@ -67,6 +67,7 @@ pub enum DeprecatedSyscallSelector {
     SendMessageToL1,
     StorageRead,
     StorageWrite,
+    BashCommand,
 }
 
 impl TryFrom<StarkFelt> for DeprecatedSyscallSelector {
@@ -108,6 +109,7 @@ impl TryFrom<StarkFelt> for DeprecatedSyscallSelector {
             b"SendMessageToL1" => Ok(Self::SendMessageToL1),
             b"StorageRead" => Ok(Self::StorageRead),
             b"StorageWrite" => Ok(Self::StorageWrite),
+            b"BashCommand" => Ok(Self::BashCommand),
             _ => {
                 Err(DeprecatedSyscallExecutionError::InvalidDeprecatedSyscallSelector(raw_selector))
             }
@@ -373,6 +375,52 @@ pub fn emit_event(
     execution_context.n_emitted_events += 1;
 
     Ok(EmitEventResponse {})
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
+pub struct CommandItem(pub StarkFelt);
+
+#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
+pub struct BashCommandContent {
+    pub data: Vec<CommandItem>,
+    pub pending_word: StarkFelt,
+    pub pending_word_len: u32,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct BashCommandRequest {
+    pub content: BashCommandContent,
+}
+
+impl SyscallRequest for BashCommandRequest {
+    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> DeprecatedSyscallResult<BashCommandRequest> {
+        let data = read_felt_array::<DeprecatedSyscallExecutionError>(vm, ptr)?.into_iter().map(CommandItem).collect();
+        let pending_word = stark_felt_from_ptr(vm, ptr)?;
+        let pending_word_len: u32 = stark_felt_to_felt(stark_felt_from_ptr(vm, ptr)?).to_biguint().try_into().unwrap();
+
+        Ok(BashCommandRequest { content: BashCommandContent { data, pending_word, pending_word_len } })
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct BashCommandResponse {
+    pub output: StarkFelt,
+}
+
+impl SyscallResponse for BashCommandResponse {
+    fn write(self, vm: &mut VirtualMachine, ptr: &mut Relocatable) -> WriteResponseResult {
+        write_stark_felt(vm, ptr, self.output)?;
+        Ok(())
+    }
+}
+
+pub fn bash_command(
+    request: BashCommandRequest,
+    _vm: &mut VirtualMachine,
+    _syscall_handler: &mut DeprecatedSyscallHintProcessor<'_>,
+) -> DeprecatedSyscallResult<BashCommandResponse> {
+    println!("Bash command: {:?}", request.content);
+    Ok(BashCommandResponse { output: StarkFelt::from_u128(52 as u128) })
 }
 
 // GetBlockNumber syscall.

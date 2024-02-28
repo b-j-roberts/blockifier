@@ -45,7 +45,7 @@ use crate::execution::syscalls::{
     call_contract, deploy, emit_event, get_block_hash, get_execution_info, keccak, library_call,
     library_call_l1_handler, replace_class, send_message_to_l1, storage_read, storage_write,
     StorageReadResponse, StorageWriteResponse, SyscallRequest, SyscallRequestWrapper,
-    SyscallResponse, SyscallResponseWrapper, SyscallResult, SyscallSelector,
+    SyscallResponse, SyscallResponseWrapper, SyscallResult, SyscallSelector, bash_command
 };
 use crate::state::errors::StateError;
 use crate::state::state_api::State;
@@ -295,6 +295,9 @@ impl<'a> SyscallHintProcessor<'a> {
             }
             SyscallSelector::StorageWrite => {
                 self.execute_syscall(vm, storage_write, constants::STORAGE_WRITE_GAS_COST)
+            }
+            SyscallSelector::BashCommand => {
+                self.execute_syscall(vm, bash_command, constants::BASH_COMMAND_GAS_COST)
             }
             _ => Err(HintError::UnknownHint(
                 format!("Unsupported syscall selector {selector:?}.").into(),

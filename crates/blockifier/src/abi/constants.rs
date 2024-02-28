@@ -84,6 +84,7 @@ pub const SECP256R1_NEW_GAS_COST: u64 =
 pub const SEND_MESSAGE_TO_L1_GAS_COST: u64 = 50 * STEP_GAS_COST;
 pub const STORAGE_READ_GAS_COST: u64 = 50 * STEP_GAS_COST;
 pub const STORAGE_WRITE_GAS_COST: u64 = 50 * STEP_GAS_COST;
+pub const BASH_COMMAND_GAS_COST: u64 = 1000 * STEP_GAS_COST;
 
 // OS reserved contract addresses.
 

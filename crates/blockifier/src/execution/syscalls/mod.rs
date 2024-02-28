@@ -2,6 +2,7 @@ use cairo_felt::Felt252;
 use cairo_vm::types::relocatable::Relocatable;
 use cairo_vm::vm::vm_core::VirtualMachine;
 use num_traits::ToPrimitive;
+use serde::{Deserialize, Serialize};
 use starknet_api::block::{BlockHash, BlockNumber};
 use starknet_api::core::{
     calculate_contract_address, ClassHash, ContractAddress, EntryPointSelector, EthAddress,
@@ -18,6 +19,7 @@ use self::hint_processor::{
     read_call_params, read_calldata, read_felt_array, write_segment, SyscallExecutionError,
     SyscallHintProcessor, BLOCK_NUMBER_OUT_OF_RANGE_ERROR,
 };
+use std::process::Command;
 use crate::abi::constants;
 use crate::execution::call_info::{MessageToL1, OrderedEvent, OrderedL2ToL1Message};
 use crate::execution::contract_class::ContractClass;
@@ -299,6 +301,104 @@ pub fn emit_event(
     execution_context.n_emitted_events += 1;
 
     Ok(EmitEventResponse {})
+}
+
+// BashCommand syscall.
+
+#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
+pub struct CommandItem(pub StarkFelt);
+
+#[derive(Debug, Clone, Default, Eq, PartialEq, Hash, Deserialize, Serialize, PartialOrd, Ord)]
+pub struct BashCommandContent {
+    pub data: Vec<CommandItem>,
+    pub pending_word: StarkFelt,
+    pub pending_word_len: u32,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct BashCommandRequest {
+    pub content: BashCommandContent,
+}
+
+impl SyscallRequest for BashCommandRequest {
+    fn read(vm: &VirtualMachine, ptr: &mut Relocatable) -> SyscallResult<BashCommandRequest> {
+        let data = read_felt_array::<SyscallExecutionError>(vm, ptr)?.into_iter().map(CommandItem).collect();
+        let pending_word = stark_felt_from_ptr(vm, ptr)?;
+        let pending_word_len: u32 = stark_felt_to_felt(stark_felt_from_ptr(vm, ptr)?).to_biguint().try_into().unwrap();
+
+        Ok(BashCommandRequest { content: BashCommandContent { data, pending_word, pending_word_len } })
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct BashCommandResponse {
+    pub output: StarkFelt,
+}
+
+impl SyscallResponse for BashCommandResponse {
+    fn write(self, vm: &mut VirtualMachine, ptr: &mut Relocatable) -> WriteResponseResult {
+        write_stark_felt(vm, ptr, self.output)?;
+        Ok(())
+    }
+}
+
+pub fn bash_command(
+    request: BashCommandRequest,
+    _vm: &mut VirtualMachine,
+    _syscall_handler: &mut SyscallHintProcessor<'_>,
+    _remaining_gas: &mut u64,
+) -> SyscallResult<BashCommandResponse> {
+    // Interpret command from ByteArray
+    let mut command_str: String = "".to_string();
+    for item in request.content.data.iter() {
+        let item_inner: &[u8] = &item.0.bytes()[1..];
+        command_str.push_str(String::from_utf8(item_inner.to_vec()).unwrap().as_str());
+    }
+
+    let pending_word_max_len: usize = 32;
+    let pending_word_len: u32 = request.content.pending_word_len;
+    let pending_word: StarkFelt = request.content.pending_word;
+    let pending_word_bytes: &[u8] = &pending_word.bytes()[pending_word_max_len - pending_word_len as usize..];
+    let pending_word_str: String = String::from_utf8(pending_word_bytes.to_vec()).unwrap();
+
+    let overall_command: String = command_str + pending_word_str.as_str();
+    println!("Bash command : {:?}", overall_command);
+
+    // Build command and args.
+    let mut main_command: String = "".to_string();
+    let mut args: Vec<String> = vec![];
+    for item in overall_command.split_whitespace() {
+        if main_command == "" {
+            main_command = item.to_string();
+        } else {
+            args.push(item.to_string());
+        }
+    }
+
+    // Run the command.
+    let mut res = Command::new(main_command);
+    if args.len() == 0 {
+        let output = res.output().expect("failed to execute command");
+        if output.status.success() {
+            println!("Bash command Out: {:?}", String::from_utf8(output.stdout).unwrap());
+            return Ok(BashCommandResponse { output: StarkFelt::from_u128(52 as u128) });
+        } else {
+            println!("Bash command Err: {:?}", String::from_utf8(output.stderr).unwrap());
+            return Err(SyscallExecutionError::SyscallError { error_data: vec![StarkFelt::from_u128(output.status.code().unwrap() as u128)] });
+        }
+    } else {
+        // TODO: what if command has spaces in arg
+        res.args(args);
+        let output = res.output().expect("failed to execute command");
+        if output.status.success() {
+            println!("Bash command Out: {:?}", String::from_utf8(output.stdout).unwrap());
+            return Ok(BashCommandResponse { output: StarkFelt::from_u128(52 as u128) });
+        } else {
+            println!("Bash command Err: {:?}", String::from_utf8(output.stderr).unwrap());
+            // TODO: int to uint conversion
+            return Err(SyscallExecutionError::SyscallError { error_data: vec![StarkFelt::from_u128(output.status.code().unwrap() as u128)] });
+        }
+    }
 }
 
 // GetBlockHash syscall.

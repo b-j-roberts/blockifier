@@ -35,7 +35,7 @@ use crate::execution::deprecated_syscalls::{
     get_tx_info, get_tx_signature, library_call, library_call_l1_handler, replace_class,
     send_message_to_l1, storage_read, storage_write, DeprecatedSyscallResult,
     DeprecatedSyscallSelector, StorageReadResponse, StorageWriteResponse, SyscallRequest,
-    SyscallResponse,
+    SyscallResponse, bash_command
 };
 use crate::execution::entry_point::{
     CallEntryPoint, CallType, EntryPointExecutionContext, ExecutionResources,
@@ -221,6 +221,7 @@ impl<'a> DeprecatedSyscallHintProcessor<'a> {
             }
             DeprecatedSyscallSelector::StorageRead => self.execute_syscall(vm, storage_read),
             DeprecatedSyscallSelector::StorageWrite => self.execute_syscall(vm, storage_write),
+            DeprecatedSyscallSelector::BashCommand => self.execute_syscall(vm, bash_command),
             _ => Err(HintError::UnknownHint(
                 format!("Unsupported syscall selector {selector:?}.").into(),
             )),
